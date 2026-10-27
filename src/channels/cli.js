@@ -25,6 +25,20 @@ export class CliChannel {
       if (line === null || line === "") break;
       if (line === "/reset") { this.session = new Session("cli"); continue; }
       if (line === "/quit") break;
+      if (line === "/login") {
+        if (this.runtime.client.cfg?.provider !== "codex") {
+          console.log("login only applies to provider=codex (apiKey is in config)");
+          continue;
+        }
+        try {
+          const auth = await this.runtime.client.loadAuth();
+          await this.runtime.client.interactiveLogin(auth);
+          console.log("login ok");
+        } catch (e) {
+          console.log(`login failed: ${e.message}`);
+        }
+        continue;
+      }
       if (line === "/help") { continue; }
       let reply;
       try {

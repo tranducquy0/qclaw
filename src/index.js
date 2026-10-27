@@ -31,6 +31,7 @@ async function selfCheck(P, cfg, cfgPath) {
   if (cfg) {
     const l = cfg.llm;
     out.push(`llm:      provider=${l.provider} model=${l.model} budget=${l.budgetTokens}t turns<=${l.maxTurns}`);
+    out.push(`login:    ${l.provider === "codex" ? (P.sha256 ? "ready" : "ready (pure-js sha256)") : "n/a (apiKey provider)"}`);
     for (const ch of ["cli", "telegram", "irc"]) {
       const c = cfg[ch] || {};
       const on = ch === "cli" ? (c.enable !== false) : c.enable === true;
