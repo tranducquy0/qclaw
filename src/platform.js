@@ -26,6 +26,7 @@ export class PlatformError extends Error {}
  * @property {(cwd: string) => Promise<string[]>} fsList       // returns entry names (files+dirs)
  * @property {(path: string) => Promise<void>} fsMkdir         // recursive
  * @property {(path: string) => Promise<void>} fsUnlink
+ * @property {Promise<ArrayBuffer|Uint8Array>} sha256(text: string)  (optional; needed for codex PKCE login)
  * @property {{setTimeout: (fn: () => void, ms: number) => any, clearTimeout: (id: any) => void}} time
  * @property {StreamIO} io                                     // stdin/stdout lines (CLI)
  * @property {string} name                                     // "node" | "qjs"

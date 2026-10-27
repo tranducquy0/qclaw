@@ -360,5 +360,6 @@ export default {
   fsMkdir,
   fsUnlink,
   time,
+  sha256: null,   // codex PKCE login needs it; qjs lacks crypto — copy auth.json from a node session
   io: { readLine: ioReadLine, write: ioWrite },
 };

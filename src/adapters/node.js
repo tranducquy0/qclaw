@@ -6,8 +6,13 @@ import { homedir } from "node:os";
 import * as fsp from "node:fs/promises";
 import * as net from "node:net";
 import * as fsPath from "node:path";
+import * as crypto from "node:crypto";
 import readline from "node:readline";
 import { PlatformError } from "../platform.js";
+
+async function sha256(text) {
+  return crypto.createHash("sha256").update(text).digest();
+}
 
 async function httpFetch(url, opts = {}) {
   try {
@@ -94,15 +99,39 @@ function exec(cmd, opts = {}) {
   });
 }
 
-const io = {
-  async readLine() {
-    const rl = readline.createInterface({ input: process.stdin });
-    const line = await new Promise((res) =>
-      rl.question("", (l) => { rl.close(); res(l); }));
-    return line;
-  },
-  async write(s) { process.stdout.write(s); },
-};
+const io = (() => {
+  // Persistent readline over stdin; resolves null on EOF (piped input,
+  // /dev/null, Ctrl-D) instead of hanging forever.
+  const stdin = process.stdin;
+  let closed = false;
+  stdin.resume();
+  stdin.on("end", () => { closed = true; });
+  let rl = null;
+  const open = () => {
+    if (rl) return rl;
+    rl = readline.createInterface({ input: stdin, terminal: false });
+    rl.on("close", () => { closed = true; });
+    return rl;
+  };
+  const lineQueue = [];
+  let waiter = null;
+  function pump(line) {
+    if (waiter) { waiter(line); waiter = null; }
+    else lineQueue.push(line);
+  }
+  return {
+    async readLine() {
+      if (lineQueue.length) return lineQueue.shift();
+      if (closed) return null;
+      const got = await new Promise((res) => {
+        waiter = res;
+        open().once("line", pump);
+        });
+      return got === undefined && closed ? null : got;
+    },
+    async write(s) { process.stdout.write(s); },
+  };
+})();
 
 export default {
   name: "node",
@@ -137,6 +166,7 @@ export default {
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: (id) => clearTimeout(id),
   },
+  sha256,
   io,
   // node-only extras (not part of the contract):
   tls: true,
