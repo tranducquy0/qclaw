@@ -27,6 +27,20 @@ if (!std || !os) {
     "qjs: std/os not loaded — run with: qjs --std -m src/index.js");
 }
 
+// Optional native module (src/native/anclaw_net.so — build via
+// src/native/build.sh). In-process libcurl + raw sockets: kills the
+// fork-per-request latency AND provides the plain TCP that this qjs
+// build lacks (std.connectTCP absent). Falls back to the curl shim
+// and an explicit TCP error when absent.
+let native = null;
+try {
+  native = (await import("../native/anclaw_net.so")).default;
+} catch (e) {
+  // no native module — adapters keep working, just slower on http and
+  // no plain TCP.
+  void e;
+}
+
 // Normalize console. ng ships a console, but verify each method — some
 // builds only have log (found the hard way: console.error missing on
 // Termux 0.17.0 → masked the original boot error).
@@ -85,12 +99,29 @@ function mkdirp(path) {
   }
 }
 
-// ---- HTTP via curl -----------------------------------------------------------
-// Body on stdout, then a trailing marker line carrying the status code.
+// ---- HTTP: native in-process curl first, subprocess curl shim fallback -------
 async function httpFetch(url, opts = {}) {
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
     throw new PlatformError(`httpFetch: bad url: ${url}`);
   }
+  if (native?.httpRequest) {
+    const headers = Object.entries(opts.headers || {})
+      .map(([k, v]) => `${k}: ${v}`).join("\n");
+    const r = await native.httpRequest({
+      url,
+      method: opts.method || "GET",
+      headers,
+      body: opts.body === undefined ? null
+        : (typeof opts.body === "string" ? opts.body : toStr(opts.body)),
+      timeoutMs: opts.timeoutMs || 60_000,
+    });
+    return { status: r.status, headers: {}, body: r.body };
+  }
+  return await curlShimFetch(url, opts);
+}
+
+// Body on stdout, then a trailing marker line carrying the status code.
+async function curlShimFetch(url, opts = {}) {
   const args = ["curl", "-sS", "-L",
     "--max-time", String(Math.ceil((opts.timeoutMs || 60_000) / 1000))];
   if (opts.method && opts.method !== "GET") args.push("-X", opts.method);
@@ -119,11 +150,32 @@ async function httpFetch(url, opts = {}) {
   };
 }
 
-// ---- TCP via std sockets -----------------------------------------------------
+// ---- TCP: native socket module first, std.connectTCP second ------------------
 async function tcpConnect(host, port) {
+  if (native?.connectTcp) {
+    const fd = native.connectTcp(String(host), port);
+    let buf = "";
+    return {
+      async write(data) { if (native.socketWrite(fd, toStr(data)) === null) throw new PlatformError("tcp write fail"); },
+      async readLine() {
+        for (;;) {
+          const idx = buf.indexOf("\n");
+          if (idx >= 0) {
+            const line = buf.slice(0, idx).replace(/\r$/, "");
+            buf = buf.slice(idx + 1);
+            return line;
+          }
+          const chunk = native.socketRead(fd, 8192);
+          if (chunk === null || chunk === undefined) return ""; // EOF
+          buf += chunk;
+        }
+      },
+      async close() { native.socketClose(fd); },
+    };
+  }
   if (typeof std.connectTCP !== "function") {
     throw new PlatformError(
-      "qjs: no std.connectTCP in this build — IRC needs the socat bridge (phase 3)");
+      "qjs: no TCP (build native module via src/native/build.sh, or socat bridge)");
   }
   const fd = await std.connectTCP(String(host), port);
   let buf = "";
