@@ -21,24 +21,41 @@
 const std = globalThis.std;
 const os = globalThis.os;
 import { PlatformError } from "../platform.js";
+import { sha256Hex } from "../core/sha256.js";
 
 if (!std || !os) {
   throw new PlatformError(
     "qjs: std/os not loaded — run with: qjs --std -m src/index.js");
 }
 
-// Optional native module (src/native/anclaw_net.so — build via
-// src/native/build.sh). In-process libcurl + raw sockets: kills the
-// fork-per-request latency AND provides the plain TCP that this qjs
-// build lacks (std.connectTCP absent). Falls back to the curl shim
-// and an explicit TCP error when absent.
+// Optional native module (src/native_modules/anclaw_net.so — build via
+// src/native_modules/build.sh). In-process libcurl + raw sockets + sha256:
+// kills the fork-per-request latency AND provides plain TCP (absent in
+// this qjs build) AND sha256 (needed for codex PKCE login without node).
+// Falls back to the curl shim / pure-JS sha256 when absent.
+//
+// NOTE: qjs resolves relative dynamic-import specifiers against the MAIN
+// script's directory (not this module's), so when the entry is elsewhere
+// (e.g. anclaw.sh wrapper, ANCLAW_SRC override) the relative import fails.
+// Therefore: build an ABSOLUTE path from scriptArgs[0] (main entry path),
+// which is always <repo>/src/<entry>.js — and also try candidates in case
+// the entry lives outside src/ someday.
 let native = null;
-try {
-  native = (await import("../native/anclaw_net.so")).default;
-} catch (e) {
-  // no native module — adapters keep working, just slower on http and
-  // no plain TCP.
-  void e;
+{
+  const here = scriptArgs[0].replace(/\/[^/]*$/, "");      // dir of main
+  const srcDir = here.replace(/\/src$/, "");               // drop /src
+  const cand = [
+    `${srcDir}/src/native_modules/anclaw_net.so`,          // entry in src/
+    `${here}/native_modules/anclaw_net.so`,                // entry in repo root
+  ];
+  for (const path of cand) {
+    try {
+      native = (await import(path)).default;
+      if (native) break;
+    } catch (e) {
+      void e;   // expect: build via src/native_modules/build.sh
+    }
+  }
 }
 
 // Normalize console. ng ships a console, but verify each method — some
@@ -360,6 +377,20 @@ export default {
   fsMkdir,
   fsUnlink,
   time,
-  sha256: null,   // codex PKCE login needs it; qjs lacks crypto — copy auth.json from a node session
+  sha256: async (text) => {
+    if (native?.sha256hex) {
+      const hex = native.sha256hex(text);
+      const out = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < out.length; i++)
+        out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+      return out;
+    }
+    // pure-JS fallback (login-time only, not perf critical)
+    const hex = sha256Hex(text);
+    const out = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < out.length; i++)
+      out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    return out;
+  },
   io: { readLine: ioReadLine, write: ioWrite },
 };

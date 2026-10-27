@@ -3,4 +3,4 @@ node_modules/
 /config.toml
 /sessions/
 *.log
-src/native/*.so
+src/native_modules/*.so

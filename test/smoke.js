@@ -3,6 +3,7 @@
 "use strict";
 
 import { parseToml, applyDefaults, ConfigError } from "../src/config.js";
+import { sha256Hex } from "../src/core/sha256.js";
 
 let pass = 0, fail = 0;
 function eq(name, got, want) {
@@ -45,6 +46,11 @@ eq("override kept", d.llm.model, "test-model");
 eq("defaults spread", parseToml("").llm, undefined);
 const full = applyDefaults({});
 eq("full defaults", full.llm.budgetTokens, 8000);
+
+// ---- sha256 (pure-JS path) — NIST vectors
+eq("sha256 ''", sha256Hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+eq("sha256 abc", sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+eq("sha256 utf8", sha256Hex("héllo — △"), "8e1e8e21b305d8998d5609ea8bbc6bac236be69bd931cf3e58df9a4911cd977e");
 
 console.log(`smoke: ${pass} passed, ${fail} failed`);
 if (globalThis.process) process.exit(fail ? 1 : 0);
