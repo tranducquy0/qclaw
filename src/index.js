@@ -1,9 +1,6 @@
-// index.py? no — index.js — anclaw entrypoint.
-// Loads the right platform adapter, reads config, runs a phase-0 self-check.
-"use strict";
-
 import { loadPlatform } from "./platform.js";
 import { parseToml, applyDefaults, ConfigError } from "./config.js";
+import { CliChannel } from "./channels/cli.js";
 
 function expandTilde(p, home) {
   if (!p) return p;
@@ -47,8 +44,62 @@ export async function main() {
   const P = await loadPlatform();
   const { cfg, path } = await loadConfig(P);
   console.log(await selfCheck(P, cfg, path));
-  // Phase 1 continues here: runtime boot + CLI channel.
+  const runtime = await buildRuntime(P, cfg, path);
+
+  if (cfg.cli.enable) {
+    await new CliChannel({ P, runtime }).run();
+  }
 }
+
+// ---- assembly --------------------------------------------------------------
+async function buildRuntime(P, cfg, cfgPath) {
+  const toolsRoot = expandTilde(cfg.tools.root, P.homeDir);
+  const { Registry } = await import("./tools/registry.js");
+  const { registerCoreTools } = await import("./tools/core.js");
+  const { LLMClient } = await import("./llm/client.js");
+  const { Runtime } = await import("./runtime.js");
+
+  const registry = new Registry();
+  registerCoreTools({
+    reg: registry,
+    P,
+    root: toolsRoot,
+    maxOutput: cfg.tools.maxOutput,
+    webFetchMax: cfg.tools.webFetchMax,
+    exaKey: cfg.tools.exaKey,
+    cfgPath,
+  });
+
+  const authPath = expandTilde("~/.anclaw/auth.json", P.homeDir);
+  const llm = new LLMClient({
+    provider: cfg.llm.provider,
+    baseURL: cfg.llm.baseURL,
+    apiKey: cfg.llm.apiKey,
+    model: cfg.llm.model,
+    authPath,
+  }, {
+    http: P.httpFetch,
+    io: P.io,
+    fs: { read: P.fsRead, write: P.fsWrite },
+    sha256: P.sha256 || undefined,
+  });
+
+  return new Runtime({
+    client: llm,
+    registry,
+    opts: {
+      budget: cfg.llm.budgetTokens,
+      maxTurns: cfg.llm.maxTurns,
+      channel: "cli",
+      cwd: toolsRoot,
+      style: cfg.llm.style,
+      maxOutput: cfg.tools.maxOutput,
+      allowed: null,
+    },
+  });
+}
+
+// ---- assembly --------------------------------------------------------------
 
 try {
   await main();

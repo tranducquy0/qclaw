@@ -154,9 +154,12 @@ export const DEFAULTS = {
   llm: {
     provider: "openai",          // "openai" | "codex"
     baseURL: "https://api.openai.com/v1",
+    apiKey: "",
     model: "gpt-4o-mini",
+    style: "caveman",
     budgetTokens: 8000,
     maxTurns: 12,
+    timeoutMs: 120000,
   },
   cli: { enable: true },
   telegram: { enable: false },
@@ -165,6 +168,7 @@ export const DEFAULTS = {
     root: "~/.anclaw/workspace", // path jail for read/write
     maxOutput: 4000,             // chars of tool output fed back to LLM
     webFetchMax: 20000,
+    exaKey: "",                  // for web action=search
   },
 };
 
