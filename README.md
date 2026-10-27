@@ -31,7 +31,9 @@ src/index.js         boot + self-check
 ## Status
 
 - [x] Phase 0 — repo, platform contract, node + qjs adapters, TOML config, self-check
-- [ ] Phase 1 — core loop, budget/packing, caveman prompt, CLI channel, Codex OAuth
+- [x] Phase 0.5 — native module `anclaw_net.so` (in-process curl + raw sockets)
+- [x] Phase 1 — LLM client (+ Codex OAuth), budget/packing, caveman prompt, agent loop, CLI channel, mock-LLM e2e test (7/7)
 - [ ] Phase 2 — Telegram channel
 - [ ] Phase 3 — IRC channel
-- [ ] Phase 4 — full tools + `bench.js` (qjs vs node decision data)
+- [ ] Phase 4 — tool hardening + full `bench.js` decision data
+- [ ] verify: qjs runtime boot (needs a live-mock fixture not node-dependent)
