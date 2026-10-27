@@ -43,8 +43,14 @@ const srv = http.createServer((req, res) => {
   req.on("data", (c) => chunks.push(c));
   req.on("end", () => {
     const body = JSON.parse(Buffer.concat(chunks).toString());
-    const lastUser = [...body.messages].reverse()
-      .find((m) => m.role === "user")?.content || "";
+    // both shapes: OpenAI completions {messages} and codex Responses {input}
+    const isResp = Array.isArray(body.input);
+    const lastUser = isResp
+      ? [...body.input].reverse()
+          .find((i) => i.type === "message" && i.role === "user")
+          ?.content?.[0]?.text || ""
+      : [...body.messages].reverse()
+          .find((m) => m.role === "user")?.content || "";
 
     const cur = SCRIPTS.find((sc) => sc.start.test(lastUser));
     // reset step only for a NEW user turn (last user msg changed)
@@ -56,12 +62,27 @@ const srv = http.createServer((req, res) => {
       { text: "[script exhausted]" };
     srv.step++;
 
-    const message = out.tool
-      ? { content: "", tool_calls: [{ id: "c1", type: "function",
-          function: { name: out.tool, arguments: out.arguments } }] }
-      : { content: out.text };
+    let respBody;
+    if (isResp) {
+      srv.lastRespInput = body.input;   // for translation assertions below
+      srv.lastInstructions = body.instructions ?? srv.lastInstructions;
+      respBody = {
+        output: out.tool
+          ? [{ type: "function_call", call_id: "c1",
+               name: out.tool, arguments: out.arguments }]
+          : [{ type: "message",
+               content: [{ type: "output_text", text: out.text }] }],
+        usage: {},
+      };
+    } else {
+      const message = out.tool
+        ? { content: "", tool_calls: [{ id: "c1", type: "function",
+            function: { name: out.tool, arguments: out.arguments } }] }
+        : { content: out.text };
+      respBody = { choices: [{ message }], usage: {} };
+    }
     res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify({ choices: [{ message }], usage: {} }));
+    res.end(JSON.stringify(respBody));
   });
 });
 
@@ -143,6 +164,47 @@ const s = new Session("t");
     ok("jail rejects", false, "no error thrown");
   } catch (e) {
     ok("jail rejects", /outside workspace/.test(e.message));
+  }
+}
+{ // provider=codex: ChatGPT Responses API path (login shape, not completions)
+  store.set("/tmp/mockauth.json", JSON.stringify({
+    access_token: "codextok", expires_at: 4e9,   // far-future: no network
+    client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
+    // JWT payload https://api.openai.com/auth.chatgpt_account_id = acct1
+    id_token: "x." + btoa(JSON.stringify({
+        "https://api.openai.com/auth": { chatgpt_account_id: "acct1" }
+      }))
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") + ".y",
+  }));
+  const reqs = [];
+  const codexLlm = new LLMClient(
+    { provider: "codex", baseURL: `http://127.0.0.1:${port}`,
+      apiKey: "", model: "mock", authPath: "/tmp/mockauth.json" },
+    { http: (url, opts) => { reqs.push({ url, opts });
+        return mockHttp(port, url, opts); },
+      fs: { read: P.fsRead, write: P.fsWrite }, io: P.io });
+  const rtCodex = new Runtime({
+    client: codexLlm, registry,
+    opts: { channel: "cli", budget: 4000, maxTurns: 8, cwd: "/tmp",
+      maxOutput: 4000 },
+  });
+  const sc = new Session("t-codex");
+  const r = await rtCodex.handle(sc, "find TODOs");
+  ok("codex turn reply", /Found TODOs: 2/.test(r), r);
+  const chatReq = reqs.find((rq) => rq.url.endsWith("/responses"));
+  ok("codex posts /responses", !!chatReq, JSON.stringify(reqs.map(rq => rq.url)));
+  if (chatReq) {
+    ok("codex account id header",
+      chatReq.opts.headers["chatgpt-account-id"] === "acct1",
+      JSON.stringify(chatReq.opts.headers));
+    const input = srv.lastRespInput || [];
+    ok("codex translates tool loop",
+      input.some((i) => i.type === "function_call") &&
+      input.some((i) => i.type === "function_call_output" && i.call_id === "c1"),
+      JSON.stringify(input).slice(0, 300));
+    ok("codex instructions from system msg",
+      typeof srv.lastInstructions === "string" &&
+      srv.lastInstructions.includes("tools"), srv.lastInstructions?.slice(0, 100));
   }
 }
 srv.close();

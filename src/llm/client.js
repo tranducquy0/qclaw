@@ -73,6 +73,8 @@ export class LLMClient {
         if (res.status === 200) {
           const tok = JSON.parse(res.body);
           auth.access_token = tok.access_token;
+          auth.refresh_token = tok.refresh_token || auth.refresh_token;
+          auth.id_token = tok.id_token || auth.id_token;
           auth.expires_at = this.nowSec() + (tok.expires_in || 3600);
           await this.saveAuth();
           return auth.access_token;
@@ -135,6 +137,7 @@ export class LLMClient {
       client_id: clientId,
       access_token: tok.access_token,
       refresh_token: tok.refresh_token,
+      id_token: tok.id_token,
       expires_at: this.nowSec() + (tok.expires_in || 3600),
     };
     await this.saveAuth();
@@ -161,6 +164,8 @@ export class LLMClient {
   // messages: [{role, content}]; tools: [{type:"function", function:{...}}]
   // returns: { content, toolCalls: [{ id, name, arguments }] }
   async chat(messages, tools) {
+    if (this.cfg.provider === "codex")
+      return await this.codexChat(messages, tools);
     const token = await this.accessToken();
     const body = {
       model: this.cfg.model,
@@ -191,5 +196,96 @@ export class LLMClient {
       })),
       usage: j.usage,
     };
+  }
+
+  // Codex plan flow: ChatGPT backend, Responses API (completions shape differs).
+  async codexChat(messages, tools) {
+    const token = await this.accessToken();
+    const instructions = [];
+    const input = [];
+    for (const m of messages) {
+      if (m.role === "system") { instructions.push(m.content); continue; }
+      if (m.role === "tool") {
+        input.push({ type: "function_call_output", call_id: m.tool_call_id,
+          output: m.content });
+        continue;
+      }
+      if (Array.isArray(m.tool_calls)) {
+        if (m.content) {
+          input.push({ type: "message", role: "assistant",
+            content: [{ type: "output_text", text: m.content }] });
+        }
+        for (const tc of m.tool_calls) {
+          input.push({ type: "function_call", call_id: tc.id,
+            name: tc.function.name, arguments: tc.function.arguments });
+        }
+        continue;
+      }
+      const typ = m.role === "assistant" ? "output_text" : "input_text";
+      input.push({ type: "message", role: m.role,
+        content: [{ type: typ, text: m.content ?? "" }] });
+    }
+    const body = {
+      model: this.cfg.model,
+      instructions: instructions.join("\n\n"),
+      input,
+      tools: (tools || []).map((t) => ({
+        type: "function", strict: false,
+        name: t.function.name, description: t.function.description || "",
+        parameters: t.function.parameters || { type: "object", properties: {} },
+      })),
+      tool_choice: "auto",
+      parallel_tool_calls: false,
+      store: false,                  // ChatGPT backend rejects persistence
+      stream: false,
+    };
+    const acct = this.accountId((await this.loadAuth()).id_token);
+    const res = await this.http(
+      `${this.cfg.baseURL || "https://chatgpt.com/backend-api/codex"}/responses`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/json",
+          "OpenAI-Beta": "responses=experimental",
+          "originator": "codex_cli_rs",
+          ...(acct ? { "chatgpt-account-id": acct } : {}),
+        },
+        body: JSON.stringify(body),
+        timeoutMs: this.cfg.timeoutMs || 120_000,
+      });
+    if (res.status === 401) throw new LLMAuthError("auth rejected (401)");
+    if (res.status >= 400) {
+      throw new LLMError(`chat failed: ${res.status} ${
+        (res.body || "").slice(0, 300)}`);
+    }
+    const j = JSON.parse(res.body);
+    let content = "";
+    const toolCalls = [];
+    for (const o of j.output || []) {
+      if (o.type === "message") {
+        for (const part of o.content || []) {
+          if (part.type === "output_text") content += part.text;
+        }
+      } else if (o.type === "function_call") {
+        toolCalls.push({ id: o.call_id, name: o.name,
+          arguments: o.arguments || "{}" });
+      }
+    }
+    return { content, toolCalls, usage: j.usage };
+  }
+
+  // chatgpt-account-id from the login id_token JWT (needed by the backend).
+  accountId(jwt) {
+    if (!jwt) return null;
+    try {
+      const b64 = jwt.split(".")[1]
+        .replace(/-/g, "+").replace(/_/g, "/");
+      const json = atob(b64 + "=".repeat((4 - b64.length % 4) % 4));
+      const claim = JSON.parse(json)["https://api.openai.com/auth"] || {};
+      return claim.chatgpt_account_id
+        || JSON.parse(json).chatgpt_account_id || null;
+    } catch { return null; }
   }
 }
