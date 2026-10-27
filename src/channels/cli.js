@@ -36,6 +36,7 @@ export class CliChannel {
           console.log("login ok");
         } catch (e) {
           console.log(`login failed: ${e.message}`);
+          if (e?.stack) console.log(e.stack);
         }
         continue;
       }

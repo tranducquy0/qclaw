@@ -178,3 +178,27 @@ export function applyDefaults(cfg) {
   }
   return cfg;
 }
+
+// First-run scaffold: valid TOML derived from DEFAULTS so the user has
+// something to edit in place instead of starting from nothing.
+export function configTemplate() {
+  const d = DEFAULTS;
+  return [
+    "# anclaw config — ~/.anclaw/config.toml (see config.example.toml)",
+    "",
+    "[llm]",
+    `provider = "${d.llm.provider}"        # "openai" (apiKey) | "codex" (then run /login)`,
+    `baseURL = "${d.llm.baseURL}"`,
+    'apiKey = ""                 # token for provider=openai',
+    `model = "${d.llm.model}"`,
+    `budgetTokens = ${d.llm.budgetTokens}`,
+    `maxTurns = ${d.llm.maxTurns}`,
+    "",
+    "[tools]",
+    `root = "${d.tools.root}"  # path jail for read/write/web`,
+    `maxOutput = ${d.tools.maxOutput}`,
+    `webFetchMax = ${d.tools.webFetchMax}`,
+    'exaKey = ""                # web action=search (Exa API key)',
+    "",
+  ].join("\n");
+}

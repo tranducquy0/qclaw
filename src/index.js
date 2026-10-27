@@ -1,5 +1,5 @@
 import { loadPlatform } from "./platform.js";
-import { parseToml, applyDefaults, ConfigError } from "./config.js";
+import { parseToml, applyDefaults, configTemplate, ConfigError } from "./config.js";
 import { CliChannel } from "./channels/cli.js";
 
 function expandTilde(p, home) {
@@ -10,7 +10,14 @@ function expandTilde(p, home) {
 async function loadConfig(P) {
   const path = expandTilde("~/.anclaw/config.toml", P.homeDir);
   const text = await P.fsRead(path);
-  if (text === null) return { cfg: null, path };
+  if (text === null) {
+    // first run: scaffold a starter config (edit in place, restart applies)
+    try {
+      await P.fsWrite(path, configTemplate());
+      console.log(`anclaw: created ${path} — edit it, then restart`);
+    } catch (e) { void e; }   // read-only home: run on defaults instead
+    return { cfg: applyDefaults({}), path };
+  }
   return { cfg: applyDefaults(parseToml(text, path)), path };
 }
 

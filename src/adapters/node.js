@@ -7,9 +7,13 @@ import * as fsp from "node:fs/promises";
 import * as net from "node:net";
 import * as fsPath from "node:path";
 import * as crypto from "node:crypto";
+import { existsSync } from "node:fs";
 import readline from "node:readline";
 import { PlatformError } from "../platform.js";
 
+// /bin/sh doesn't exist on Android/Termux — honor $PREFIX/bin/sh when real.
+const SH = process.env.PREFIX && existsSync(`${process.env.PREFIX}/bin/sh`)
+  ? `${process.env.PREFIX}/bin/sh` : "/bin/sh";
 async function sha256(text) {
   return crypto.createHash("sha256").update(text).digest();
 }
@@ -78,7 +82,7 @@ function exec(cmd, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = opts.shell === false
       ? spawn(cmd[0], cmd.slice(1), { cwd: opts.cwd })
-      : spawn("/bin/sh", ["-c", Array.isArray(cmd) ? cmd.join(" ") : cmd],
+      : spawn(SH, ["-c", Array.isArray(cmd) ? cmd.join(" ") : cmd],
           { cwd: opts.cwd });
     let out = "", err = "";
     const timer = opts.timeoutMs
@@ -100,34 +104,27 @@ function exec(cmd, opts = {}) {
 }
 
 const io = (() => {
-  // Persistent readline over stdin; resolves null on EOF (piped input,
-  // /dev/null, Ctrl-D) instead of hanging forever.
+  // Persistent readline. Every stdin line goes through pump(): lines that
+  // arrive before readLine() are queued, not dropped (piped input case).
+  // Resolves null on EOF (piped /dev/null, Ctrl-D).
   const stdin = process.stdin;
   let closed = false;
-  stdin.resume();
-  stdin.on("end", () => { closed = true; });
-  let rl = null;
-  const open = () => {
-    if (rl) return rl;
-    rl = readline.createInterface({ input: stdin, terminal: false });
-    rl.on("close", () => { closed = true; });
-    return rl;
-  };
   const lineQueue = [];
   let waiter = null;
   function pump(line) {
     if (waiter) { waiter(line); waiter = null; }
     else lineQueue.push(line);
   }
+  stdin.resume();
+  stdin.on("end", () => { closed = true; });
+  const rl = readline.createInterface({ input: stdin, terminal: false });
+  rl.on("close", () => { closed = true; });
+  rl.on("line", pump);
   return {
     async readLine() {
       if (lineQueue.length) return lineQueue.shift();
       if (closed) return null;
-      const got = await new Promise((res) => {
-        waiter = res;
-        open().once("line", pump);
-        });
-      return got === undefined && closed ? null : got;
+      return await new Promise((res) => { waiter = res; });
     },
     async write(s) { process.stdout.write(s); },
   };

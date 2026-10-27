@@ -75,7 +75,25 @@ for (const m of ["log", "info", "warn", "error"]) {
 }
 
 const MARKER = "__ANCLAW_HTTP__";
-const TMPDIR = "/data/data/com.termux/files/usr/tmp";
+// Android/Termux has no /tmp and keeps its shell under $PREFIX (termux sets
+// PREFIX); desktop passes through unset. $PREFIX paths are only honored when
+// they exist, and TMPDIR always wins as the scratch dir.
+function envGet(name) {
+  if (typeof std.getenv === "function") {
+    const v = std.getenv(name);
+    if (v) return v;
+  }
+  return os.getenv?.(name) || undefined;
+}
+function fileExists(path) {
+  try { return (os.stat(path).st_mode & 0o170000) !== 0; } catch { return false; }
+}
+const PREFIX = envGet("PREFIX") || "";
+// TMPDIR: env > $PREFIX/tmp (termux) > /tmp — first one that exists wins.
+const TMPDIR = [envGet("TMPDIR"), PREFIX && `${PREFIX}/tmp`, "/tmp"]
+  .find(fileExists) || "/tmp";
+const SHELL = PREFIX && fileExists(`${PREFIX}/bin/sh`)
+  ? `${PREFIX}/bin/sh` : "/bin/sh";
 let tmpSeq = 0;
 
 // ---- helpers ---------------------------------------------------------------
@@ -236,7 +254,7 @@ async function exec(cmd, opts = {}) {
   const wrapped =
     `{ ${shellCmd}${redirect} ; } ; echo $? > ${shellQuote(codeFile)}`;
 
-  const p = std.popen(`/bin/sh -c ${shellQuote(wrapped)}`, "r");
+  const p = std.popen(`${shellQuote(SHELL)} -c ${shellQuote(wrapped)}`, "r");
   let out = "";
   let cancelled = false;
   for (;;) {

@@ -60,8 +60,7 @@ export class LLMClient {
     // refresh flow
     if (auth.refresh_token && auth.client_id) {
       try {
-        const res = await this.http({
-          url: "https://auth.openai.com/oauth/token",
+        const res = await this.http("https://auth.openai.com/oauth/token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -93,24 +92,29 @@ export class LLMClient {
     // PKCE
     const verifier = this.randomB64(48);
     const challenge = this.base64Url(await this.sha256(verifier));
-    const clientId = auth.client_id || "app_EMoamEEZ73f0CkXnXqVrbbfMG"; // Codex CLI client
+    const clientId = auth.client_id || "app_EMoamEEZ73f0CkXaXp7hrann"; // codex CLI (RS) client
     const redirectUri = "http://localhost:1455/auth/callback";
+    // Shape mirrors codex CLI's authorize request; missing codex_cli flags /
+    // static state make auth.openai bounce users to "Your session has ended".
+    const state = this.base64Url(await this.sha256(verifier + "state"));
     const url =
-      "https://auth.openai.com/authorize?" +
+      "https://auth.openai.com/oauth/authorize?" +
       "response_type=code" +
       `&client_id=${clientId}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&scope=${encodeURIComponent("openid profile email offline_access")}` +
-      "&state=anclaw" +
-      `&code_challenge=${challenge}&code_challenge_method=S256`;
+      `&state=${state}` +
+      `&code_challenge=${challenge}&code_challenge_method=S256` +
+      "&id_token_add_organizations=true" +
+      "&codex_cli_simplified_flow=true" +
+      "&originator=codex_cli_rs";
     this.io.write("\ncodex login: open this URL, sign in, then paste the\n" +
       "URL at the end (starts with http://localhost:1455/...):\n\n" +
       `  ${url}\n\n> `);
     const pasted = (await this.io.readLine()).trim();
     const m = /[?&]code=([^&\s]+)/.exec(pasted);
     if (!m) throw new LLMAuthError("no code in pasted URL");
-    const res = await this.http({
-      url: "https://auth.openai.com/oauth/token",
+    const res = await this.http("https://auth.openai.com/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -164,8 +168,7 @@ export class LLMClient {
       parallel_tool_calls: false,
     };
     if (tools && tools.length) body.tools = tools;
-    const res = await this.http({
-      url: `${this.cfg.baseURL}/chat/completions`,
+    const res = await this.http(`${this.cfg.baseURL}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

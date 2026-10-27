@@ -99,7 +99,7 @@ registerCoreTools({
 const llm = new LLMClient(
   { provider: "openai", baseURL: `http://127.0.0.1:${port}`,
     apiKey: "test", model: "mock" },
-  { http: (o) => mockHttp(port, o), fs: P, io: P.io });
+  { http: (url, opts) => mockHttp(port, url, opts), fs: P, io: P.io });
 
 const rt = new Runtime({
   client: llm, registry,
@@ -150,10 +150,11 @@ console.log(`runtime_test: ${pass} passed, ${fail} failed`);
 if (globalThis.process) process.exit(fail ? 1 : 0);
 else if (globalThis.std?.exit) std.exit(fail ? 1 : 0);
 
-// minimal glue: LLMClient contract http(url, opts) -> mock adapter
-function mockHttp(portNo, o) {
+// minimal glue: platform contract httpFetch(url, opts) -> mock adapter
+function mockHttp(portNo, url, opts) {
+  const o = opts || {};
   return new Promise((resolve, reject) => {
-    const u = new URL(o.url);
+    const u = new URL(url);
     const where = {
       host: "127.0.0.1", port: portNo, path: u.pathname,
       method: o.method || "GET", headers: o.headers,

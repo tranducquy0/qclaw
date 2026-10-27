@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # anclaw launcher — select platform: ./anclaw [node|qjs]
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
