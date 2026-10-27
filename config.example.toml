@@ -1,0 +1,31 @@
+# anclaw config — TOML subset (see src/config.js header for what's supported)
+# Lives at ~/.anclaw/config.toml
+
+[llm]
+provider = "openai"            # "openai" | "codex"
+baseURL = "https://api.openai.com/v1"
+apiKey = "sk-..."              # not needed for codex
+model = "gpt-4o-mini"
+budgetTokens = 8000
+maxTurns = 12
+
+[cli]
+enable = true                  # default when this file exists? (off = false)
+
+[telegram]
+enable = false
+token = ""                     # botfather token
+owner_ids = [123456789]        # full tool access; others read-only
+
+[irc]
+enable = false
+server = "irc.libera.chat"
+port = 6667                    # plain TCP only on qjs; node supports TLS
+nick = "anclaw"
+channels = ["#arduino"]
+owners = ["yournick!*@*"]
+
+[tools]
+root = "~/.anclaw/workspace"   # path jail for read/write
+maxOutput = 4000               # chars of tool output fed back to the LLM
+webFetchMax = 20000
