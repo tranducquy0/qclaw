@@ -85,8 +85,13 @@ function envGet(name) {
   }
   return os.getenv?.(name) || undefined;
 }
+// ng 0.17.0: os.stat returns [statInfo, err]; fields are mode/size (no st_).
 function fileExists(path) {
-  try { return (os.stat(path).st_mode & 0o170000) !== 0; } catch { return false; }
+  try {
+    const r = os.stat(path);
+    const st = Array.isArray(r) ? r[0] : r;
+    return !!(st && st.mode);
+  } catch { return false; }
 }
 const PREFIX = envGet("PREFIX") || "";
 // TMPDIR: env > $PREFIX/tmp (termux) > /tmp — first one that exists wins.
@@ -311,8 +316,12 @@ async function fsWrite(path, data, append = false) {
 
 async function fsStat(path) {
   try {
-    const st = os.stat(path);
-    return { exists: true, size: st.st_size, isDir: (st.st_mode & 0o170000) === 0o040000 };
+    const r = os.stat(path);              // ng: [statInfo, err] tuple
+    const st = Array.isArray(r) ? r[0] : r;
+    if (!st || st.mode === undefined) return { exists: false, size: 0, isDir: false };
+    const type = st.mode & 0o170000;
+    return { exists: true, size: st.size,
+      isDir: type === 0o040000 ? true : type !== 0o100000 };
   } catch { return { exists: false, size: 0, isDir: false }; }
 }
 
@@ -321,8 +330,9 @@ async function fsList(cwd) {
   for (const name of os.readdir(cwd)) {
     if (name === "." || name === "..") continue;
     try {
-      const st = os.stat(cwd + "/" + name);
-      out.push((st && (st.st_mode & 0o170000) === 0o040000) ? name + "/" : name);
+      const r = os.stat(cwd + "/" + name);  // ng: tuple; fields mode/size
+      const st = Array.isArray(r) ? r[0] : r;
+      out.push(st && (st.mode & 0o170000) === 0o040000 ? name + "/" : name);
     } catch { out.push(name); }
   }
   return out;
